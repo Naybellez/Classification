@@ -94,6 +94,30 @@ def build_net(lin_layer_size, dropout, first_lin_lay, ks):
 				nn.Linear(lin_layer_size,11),
 				nn.Softmax(),
 			)
+            
+        def _pad(self, x):
+            # add padding to tensor image
+            img = img.squeeze()
+            
+            # select padding from sides of image
+            left_x = img[:,:,:pad_size]
+            right_x = img[:,:,-pad_size:]
+            
+            # get sizes for new image
+            y = img.shape[1]
+            x = img.shape[2]+(pad_size*2)
+            
+            # create empty array for new image size
+            new_x = np.zeros((3, y, x))
+            # fill empty array
+            new_x[:,:,:pad_size] = right_x
+            new_x[:,:,pad_size:-pad_size] = img
+            new_x[:,:,-pad_size:] = left_x
+            
+            # convert to tensor
+            new_x = torch.tensor(new_x, dtype=torch.float32)
+            new_x = torch.unsqueeze(new_x, 0)
+            return new_x
 
 		def forward(self, x):
 			x= self.conv_layers(x)
