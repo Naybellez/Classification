@@ -12,11 +12,13 @@ from torch.nn import functional as F
 import random
 from sklearn.model_selection import train_test_split
 
-def import_imagedata(): # import image data from dir
+
+#		GET DATA FUNCTIONS
+def import_imagedata(file_path): # import image data from dir
 	images = []
 	labels = []
 
-	file_path = r'/its/home/nn268/optics/images/'
+	#file_path = r'/its/home/nn268/optics/images/'
 
 	for file in os.listdir(file_path):
 		if file[0:4] == 'IDSW':
@@ -29,15 +31,26 @@ def import_imagedata(): # import image data from dir
 	image_arr = np.array(images)
 	return image_arr, label_arr
 
-def get_data():
-	x, y = import_imagedata()
+def get_data(file_path):
+	x, y = import_imagedata(file_path)
 	random_seed = random.seed()
 	x_train, x_test, y_train, y_test = train_test_split(x, y, test_size=0.3, random_state=random_seed)
 	x_train, x_val, y_train, y_val = train_test_split(x_train, y_train, test_size =0.1, random_state=random_seed, shuffle=True)
 
 	return x_train, y_train, x_val, y_val, x_test, y_test
 
+# 		ONE HOT ENCODE LABEL DATA 
+def label_oh_tf(lab, device, num_classes):	
+	one_hot = np.zeros(num_classes)
+	lab = int(lab)
+	one_hot[lab] = 1
+	label = torch.tensor(one_hot)
+	label = label.to(torch.float32)
+	label = label.to(device) #
+	return label
 
+
+# 	IMAGE DATA FUNCTIONS
 
 def Unwrap(imgIn): #Amani unwrap fn
 
@@ -88,8 +101,9 @@ def Unwrap(imgIn): #Amani unwrap fn
 
     return result
 	
-#preprocessing class. colour, scale, tensoring
 
+#	PREPROCESSING CLASS
+# 	DEALS WITH: 	COLOUR	SCALE	 TENSOR
 class  ImageProcessor():
 	def __init__(self, device):
 		self.device=device
@@ -102,6 +116,17 @@ class  ImageProcessor():
 		new_im = np.array(new_im)
 		new_im = np.transpose(new_im, (1,2,0))
 		return new_im
+	# padding?
+	def padding(self, img, pad_size):
+		left_x = img[:,:pad_size,:] # h, w, c
+		right_x = img[:,-pad_size:,:]
+		y = img.shape[0]
+		x = img.shape[1]+(pad_size*2)
+		new_x = np.full((y, x, 3),255) # h w c
+		new_x[:,:pad_size,:] = right_x
+		new_x[:,pad_size:-pad_size,:] = img
+		new_x[:,-pad_size:,:] = left_x
+		return new_x
 
 	# tenor functions
 	def tensoring(self, img):
@@ -119,12 +144,23 @@ class  ImageProcessor():
 		return tensor
 
 	#useful functions
-	def colour_size_tense(self, img_path, col, size,  unwrapped=True):
-
-		im = cv2.imread(img_path)
-		if unwrapped:
-			im = Unwrap(im)
-
+	def colour_size_tense(self, img_path, col, size, pad:int, unwrap=False):
+		if isinstance(img_path, str):
+			im = cv2.imread(img_path)
+			#print(im.shape, '1')
+			#print(im)
+		else:
+			im= img_path
+			
+		if unwrap:
+			if size[0] != size[1]:
+				im = Unwrap(im)
+				#print(im.shape, '2')
+		#print(im, '2')
+		if im.shape[2]==1:
+			#im= cv2.resize(im, (size[0], size[1]))
+			im= self.to_tensor(im)
+			return(im)
 		r = im[:,:,2]
 		g = im[:,:,1]
 		b = im[:,:,0]
@@ -140,7 +176,14 @@ class  ImageProcessor():
 		elif col =='colour' or col == 'color':
 			pass
 		
-		im = cv2.resize(im,  (size[0], size[1]))
+		if unwrap:
+			im = cv2.resize(im, (size[0], size[1]))
+			#print(im.shape, '3')
+
+		if pad > 0:
+			im = self.padding(img=im, pad_size=pad)
+			#print(im.shape, '4')
+		#print(im.shape, '5')
 		im = self.to_tensor(im)
 		#print(type(im))
 		return im
@@ -156,98 +199,37 @@ class  ImageProcessor():
 			return img
 
 
-def label_oh_tf(lab, device):	# one hot encode label data
-	num_classes = 11
-	one_hot = np.zeros(num_classes)
-	lab = int(lab)
-	one_hot[lab] = 1
-	label = torch.tensor(one_hot)
-	label = label.to(torch.float32)
-	label = label.to(device) #
-	return label
-
-
-def loop(model, X, Y, epoch, loss_fn, device, col_dict, optimizer =None, train =True):	# Train and Val loops. Default is train
-	model = model
-	total_samples = len(X)
-	if train:
-		model.train()
-		#lr_ls = []
-	else:
-		model.eval()
-
-	predict_list = []
-	total_count = 0
-	num_correct = 0
-	current_loss = 0
-
-	colour = col_dict['colour']
-	size = col_dict['size']
-
-	for idx, img in enumerate(X):
-		#tense = tensoring(img).to(device)
-		prepro = ImageProcessor(device, colour, size)
-		tense = prepro.colour_size_tense(img)
-
-		prediction = model.forward(tense)
-		label = label_oh_tf(Y[idx], device)
-
-		#if train:
-		#	lr_ls.append(optimizer.param_groups[0]['lr'])
-
-		loss = loss_fn(prediction, label)
-		predict_list.append(prediction.argmax())
-
-		if prediction.argmax() == label.argmax():
-			num_correct +=1
-			#if train:
-			#	print(f'\n ########################### HIT ###########################  -- {idx} / {total_samples} \n')
-
-		total_count+=1
-		current_loss += loss.item()
-		if train:
-			optimizer.zero_grad()
-			loss.backward()
-			optimizer.step()
-	#print(num_correct/len(X))
-	if train:
-		return current_loss, predict_list, num_correct, model, optimizer #, lr_ls
-	else:
-		return current_loss, predict_list, num_correct
-
-def test_loop(model, X, Y, loss_fn, device, col_dict,title, WANDB=False, wandb=None):
-	model = model.eval()
-	predict_list = []
-	total_count =0
-	num_correct = 0
-	correct = 0
-	colour = col_dict['colour']
-	size = col_dict['size']
-
-	with torch.no_grad():
-		for idx, img in enumerate(X):
-			prepro = ImageProcessor(device, colour, size)
-			tense = prepro.colour_size_tense(img)
-			prediction = model.forward(tense)
-			label = label_oh_tf(Y[idx], device)
-
-			if prediction.argmax()==label.argmax():
-				num_correct +=1
-			total_count +=1
-			correct +=(prediction.argmax()==label.argmax()).sum().item()
-
-		accuracy = 100*(num_correct/total_count)
-		if WANDB:
-			wandb.log({'Test_accuracy':accuracy})
-			X = list(X)
-			torch.onnx.export(model, X, f'{title}_accuracy{accuracy}.onnx')
-			wandb.save(f'{title}_{accuracy}.onnx')
 
 
 
 
+def add_padding(img, pad_size): 
+    # add padding to unwrapped tensor image
+    img = img.squeeze()
+    # select padding from sides of image
+    left_x = img[:,:,:pad_size]
+    right_x = img[:,:,-pad_size:]
+    # get sizes for new image
+    y = img.shape[1]
+    x = img.shape[2]+(pad_size*2)
+    # create empty array for new image size
+    new_x = np.zeros((3, y, x))
+    # fill empty array
+    new_x[:,:,:pad_size] = right_x
+    new_x[:,:,pad_size:-pad_size] = img
+    new_x[:,:,-pad_size:] = left_x
+    # convert to tensor
+    new_x = torch.tensor(new_x, dtype=torch.float32)
+    new_x = torch.unsqueeze(new_x, 0)
+    return new_x
 
-# Helpful printing functions
+
+def yaw(image, pixels):
+        image = np.roll(image, pixels, axis=1)
+        image[:,-1]= image[:,0]
+        return image
+
+# Helpful printing functions. Could probably be deleated
 def print_run_header(learning_rate, optim, loss_fn):
 	print('\n')
 	print('LR: ', learning_rate)
@@ -273,17 +255,7 @@ def print_top_results(best_optim, best_lossfn, best_lr, best_valaccuracy, best_e
 	print()
 	print(best_optim, best_lossfn, best_lr, best_valaccuracy, best_epoch)
 
-def set_optimizer(optim):
-	optim_list=[]
-	if optim =='Adam':
-		optimizer1 = torch.optim.Adam(model.parameters(), lr=learning_rate)
-		optimizer2 = torch.optim.Adam(model.parameters(), lr=learning_rate,weight_decay=1e-5)
-		optim_list.append(optimizer1)
-		optim_list.append(optimizer2)
-	elif optim == 'SGD':
-		optimizer3 = torch.optim.SGD(model.parameters(), lr=learning_rate)
-		optim_list.append(optimizer3)
-	return optim_list
+
 
 
 
